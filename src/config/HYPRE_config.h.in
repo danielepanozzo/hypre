@@ -289,6 +289,9 @@
 /* Define to 1 if using UMPIRE for host memory */
 #undef HYPRE_USING_UMPIRE_HOST
 
+/* Define to 1 if using mimalloc for host memory */
+#undef HYPRE_USING_MIMALLOC
+
 /* Define to 1 if using UMPIRE for pinned memory */
 #undef HYPRE_USING_UMPIRE_PINNED
 

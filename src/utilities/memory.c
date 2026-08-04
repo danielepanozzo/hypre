@@ -13,6 +13,10 @@
 
 #include "_hypre_utilities.h"
 #include "_hypre_utilities.hpp"
+
+#if defined(HYPRE_USING_MIMALLOC)
+#include <mimalloc.h>
+#endif
 #if defined(__APPLE__)
 #include <sys/types.h>
 #include <sys/sysctl.h>
@@ -254,6 +258,15 @@ hypre_HostMalloc(size_t size, HYPRE_Int zeroinit)
    {
       memset(ptr, 0, size);
    }
+#elif defined(HYPRE_USING_MIMALLOC)
+   if (zeroinit)
+   {
+      ptr = mi_calloc(size, 1);
+   }
+   else
+   {
+      ptr = mi_malloc(size);
+   }
 #else
    if (zeroinit)
    {
@@ -457,6 +470,8 @@ hypre_HostFree(void *ptr)
 {
 #if defined(HYPRE_USING_UMPIRE_HOST)
    hypre_umpire_host_pooled_free(ptr);
+#elif defined(HYPRE_USING_MIMALLOC)
+   mi_free(ptr);
 #else
    free(ptr);
 #endif
@@ -1013,6 +1028,8 @@ hypre_ReAlloc(void *ptr, size_t size, HYPRE_MemoryLocation location)
 
 #if defined(HYPRE_USING_UMPIRE_HOST)
    ptr = hypre_umpire_host_pooled_realloc(ptr, size);
+#elif defined(HYPRE_USING_MIMALLOC)
+   ptr = mi_realloc(ptr, size);
 #else
    ptr = realloc(ptr, size);
 #endif

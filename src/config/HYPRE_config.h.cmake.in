@@ -95,6 +95,9 @@
 /* Use UMPIRE for host memory */
 #cmakedefine HYPRE_USING_UMPIRE_HOST 1
 
+/* Use mimalloc for host memory */
+#cmakedefine HYPRE_USING_MIMALLOC 1
+
 /* Use UMPIRE for pinned memory */
 #cmakedefine HYPRE_USING_UMPIRE_PINNED 1
 
