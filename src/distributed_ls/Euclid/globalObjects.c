@@ -22,15 +22,15 @@ extern void sigRegister_dh(void); /* use sig_dh.h if not for euclid_signals_len 
 /*-------------------------------------------------------------------------
  * Globally scoped variables, flags, and objects
  *-------------------------------------------------------------------------*/
-bool        errFlag_dh = false; /* set to "true" by functions encountering errors */
-Parser_dh   parser_dh = NULL;   /* for setting/getting runtime options */
-TimeLog_dh  tlog_dh = NULL;     /* internal timing  functionality */
-Mem_dh      mem_dh = NULL;      /* memory management */
-FILE        *logFile = NULL;
-char        msgBuf_dh[MSG_BUF_SIZE_DH]; /* for internal use */
-HYPRE_Int         np_dh = 1;     /* number of processors and subdomains */
-HYPRE_Int         myid_dh = 0;   /* rank of this processor (and subdomain) */
-MPI_Comm    comm_dh = 0;
+_Thread_local bool        errFlag_dh = false; /* set to "true" by functions encountering errors */
+_Thread_local Parser_dh   parser_dh = NULL;   /* for setting/getting runtime options */
+_Thread_local TimeLog_dh  tlog_dh = NULL;     /* internal timing  functionality */
+_Thread_local Mem_dh      mem_dh = NULL;      /* memory management */
+_Thread_local FILE        *logFile = NULL;
+_Thread_local char        msgBuf_dh[MSG_BUF_SIZE_DH]; /* for internal use */
+_Thread_local HYPRE_Int         np_dh = 1;     /* number of processors and subdomains */
+_Thread_local HYPRE_Int         myid_dh = 0;   /* rank of this processor (and subdomain) */
+_Thread_local MPI_Comm    comm_dh = 0;
 
 
   /* Each processor (may) open a logfile.
@@ -41,13 +41,13 @@ MPI_Comm    comm_dh = 0;
 
 void openLogfile_dh(HYPRE_Int argc, char *argv[]);
 void closeLogfile_dh(void);
-bool logInfoToStderr  = false;
-bool logInfoToFile    = true;
-bool logFuncsToStderr = false;
-bool logFuncsToFile   = false;
+_Thread_local bool logInfoToStderr  = false;
+_Thread_local bool logInfoToFile    = true;
+_Thread_local bool logFuncsToStderr = false;
+_Thread_local bool logFuncsToFile   = false;
 
 bool ignoreMe = true;
-HYPRE_Int  ref_counter = 0;
+_Thread_local HYPRE_Int  ref_counter = 0;
 
 #endif
 
@@ -59,12 +59,12 @@ HYPRE_Int  ref_counter = 0;
 #define MAX_MSG_SIZE 1024
 #define MAX_STACK_SIZE 20
 
-static  char errMsg_private[MAX_STACK_SIZE][MAX_MSG_SIZE];
-static  HYPRE_Int errCount_private = 0;
+static _Thread_local char errMsg_private[MAX_STACK_SIZE][MAX_MSG_SIZE];
+static _Thread_local HYPRE_Int errCount_private = 0;
 
-static  char calling_stack[MAX_STACK_SIZE][MAX_MSG_SIZE];
+static _Thread_local char calling_stack[MAX_STACK_SIZE][MAX_MSG_SIZE];
 /* static  HYPRE_Int  priority_private[MAX_STACK_SIZE]; */
-static  HYPRE_Int calling_stack_count = 0;
+static _Thread_local HYPRE_Int calling_stack_count = 0;
 
 /* static  char errMsg[MAX_MSG_SIZE];    */
 

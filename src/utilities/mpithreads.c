@@ -314,6 +314,22 @@ static void comm_barrier(hypre_MPI_Comm c)
 
    if (c == hypre_MPI_COMM_SELF || !k || k->size <= 1) { return; }
 
+#ifdef TMPI_LOCK_BARRIER
+   pthread_mutex_lock(&k->mtx);
+   gen = k->generation;
+   if (++k->count == k->size)
+   {
+      k->count = 0;
+      k->generation++;
+      pthread_cond_broadcast(&k->cv);
+   }
+   else
+   {
+      while (gen == k->generation) { pthread_cond_wait(&k->cv, &k->mtx); }
+   }
+   pthread_mutex_unlock(&k->mtx);
+   (void) cnt; (void) spins;
+#else
    gen = __atomic_load_n(&k->generation, __ATOMIC_ACQUIRE);
    cnt = __atomic_add_fetch(&k->count, 1, __ATOMIC_ACQ_REL);
 
@@ -333,12 +349,9 @@ static void comm_barrier(hypre_MPI_Comm c)
          __builtin_ia32_pause();
 #endif
       }
-      else
-      {
-         sched_yield();
-         spins = 4096;
-      }
+      else { sched_yield(); spins = 4096; }
    }
+#endif
 }
 
 /*--------------------------------------------------------------------------
@@ -388,6 +401,32 @@ static int match_ok(int p_comm, int p_src, int p_tag, int m_comm, int m_src, int
    return 1;
 }
 
+
+/* Diagnostic: dump the matching queues of 'world_rank'. Only called when a
+   truncation has already made the run fatal. */
+static void dump_queues(int world_rank)
+{
+   tmpi_inbox   *b = &g_inbox[world_rank];
+   tmpi_pending *p;
+   tmpi_msg     *m;
+   int i;
+
+   fprintf(stderr, "  posted receives on rank %d (in order):\n", world_rank);
+   for (i = 0, p = b->prq_head; p; p = p->next, i++)
+   {
+      fprintf(stderr, "    [%d] comm=%d src=%d tag=%d capacity=%zu bytes\n",
+              i, p->comm, p->src, p->tag, msg_bytes(p->count, p->dt));
+   }
+   if (!i) { fprintf(stderr, "    (none)\n"); }
+   fprintf(stderr, "  unexpected messages on rank %d (in order):\n", world_rank);
+   for (i = 0, m = b->umq_head; m; m = m->next, i++)
+   {
+      fprintf(stderr, "    [%d] comm=%d src=%d tag=%d %zu bytes\n",
+              i, m->comm, m->src, m->tag, m->nbytes);
+   }
+   if (!i) { fprintf(stderr, "    (none)\n"); }
+}
+
 /* copy an arrived message into a posted receive; caller holds the inbox lock */
 static void deliver(tmpi_pending *p, int m_src, int m_tag, const char *data, size_t nbytes)
 {
@@ -399,6 +438,7 @@ static void deliver(tmpi_pending *p, int m_src, int m_tag, const char *data, siz
               "tmpi: MESSAGE TRUNCATED on rank %d: comm=%d src=%d tag=%d "
               "sent=%zu bytes, recv capacity=%zu bytes (count=%d dt=%d)\n",
               g_myrank, p->comm, m_src, m_tag, nbytes, cap, p->count, p->dt);
+      dump_queues(g_myrank);
       abort();
    }
    if (nbytes > 0) { unpack(data, p->buf, p->count, p->dt, nbytes); }
@@ -427,6 +467,7 @@ static void do_send(const void *buf, int count, int dt, int dest, int tag, hypre
    /* Fast path: if a matching receive is already posted, detach it and copy
       straight into its buffer -- no heap allocation, one copy instead of two.
       This is hypre's normal pattern (Irecv before Isend). */
+#ifndef TMPI_DISABLE_FASTSEND
    pthread_mutex_lock(&b->mtx);
    prev = NULL;
    for (p = b->prq_head; p; prev = p, p = p->next)
@@ -449,6 +490,7 @@ static void do_send(const void *buf, int count, int dt, int dest, int tag, hypre
                  "tmpi: MESSAGE TRUNCATED on rank %d: comm=%d src=%d tag=%d "
                  "sent=%zu bytes, recv capacity=%zu bytes (count=%d dt=%d)\n",
                  dest_world, (int) comm, my_crank, tag, nbytes, cap, p->count, p->dt);
+         dump_queues(dest_world);
          abort();
       }
       if (nbytes > 0)
@@ -472,6 +514,7 @@ static void do_send(const void *buf, int count, int dt, int dest, int tag, hypre
       pthread_mutex_unlock(&b->mtx);
       return;
    }
+#endif /* TMPI_DISABLE_FASTSEND */
 
    /* Slow path: nobody is waiting yet, so buffer the message. */
    {

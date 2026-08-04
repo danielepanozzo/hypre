@@ -68,6 +68,17 @@ int main(void)
 each one a rank of `COMM_WORLD`, and joins them. `user` is passed through
 untouched. Also available: `hypre_tmpi_rank()`, `hypre_tmpi_nranks()`.
 
+## Debug switches
+
+| build flag | effect |
+|---|---|
+| `-DTMPI_DISABLE_FASTSEND` | never copy straight into a posted receive; always buffer |
+| `-DTMPI_LOCK_BARRIER` | use a mutex/condvar barrier instead of the atomic spin barrier |
+
+Both are for bisecting a suspected bug down to the message layer. A fatal message
+truncation also dumps the posted-receive and unexpected-message queues of the
+receiving rank.
+
 ## Debugging a hang
 
 ```sh
@@ -88,11 +99,17 @@ keeping: `perf` and `ptrace` are often restricted on shared clusters.
 
 ## Correctness
 
-**hypre's own `TEST_ij` suite, all 406 cases**, run under real Open MPI and
-under threads-as-ranks, comparing numerical output case by case. The `ij`
-driver itself is unmodified — its `main()` is renamed at compile time.
+**hypre's own test suites, 978 cases**, run under real Open MPI and under
+threads-as-ranks, comparing numerical output case by case. The drivers are
+unmodified — their `main()` is renamed at compile time.
 
-Result: every runnable case matches. The only differences are
+| suite | cases | identical |
+|---|---|---|
+| `TEST_struct` | 196 | **196** |
+| `TEST_sstruct` | 376 | **376** |
+| `TEST_ij` | 406 | 404 (2 = the flexamg issue below) |
+
+Apart from that one issue, the only differences are
 
 * **floating-point last digit** — this implementation reduces in rank order,
   Open MPI uses a tree. Addition is not associative and MPI guarantees no
@@ -134,6 +151,25 @@ allocations serialise in `mmap`/`munmap` and each `munmap` triggers a TLB
 shootdown across every core in the process. No change to the MPI layer can fix
 this. If it matters for your workload, link a thread-caching allocator
 (jemalloc, tcmalloc, mimalloc) — that targets the actual cause.
+
+## Known issue
+
+`-flexamg_cycle_struct` (BoomerAMG's flexible cycle) fails on 2 or more ranks
+with a message-truncation abort; it is correct on 1 rank, and correct under real
+MPI at every rank count. Minimal reproducer:
+
+```sh
+TMPI_NP=2 ./ij -n 40 40 40 -P 2 1 1 -solver 1 \
+    -flexamg_cycle_struct 0,0,-1,-1,-1,-1,1,1,1,1,-2
+```
+
+The two ranks end up disagreeing about the message sequence (a receive posted for
+2 doubles is offered a 1600-double message on the same communicator and tag),
+which points at a collective returning results that differ across ranks and then
+diverging the control flow. Ruled out so far: the single-copy send fast path and
+the spin barrier — building with `-DTMPI_DISABLE_FASTSEND` or
+`-DTMPI_LOCK_BARRIER` reproduces it identically. This affects 2 of hypre's 976
+`TEST_ij`/`TEST_struct`/`TEST_sstruct` cases.
 
 ## Limits
 
