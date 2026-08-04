@@ -726,26 +726,84 @@ static void reduce_into(void *dst, const void *src, HYPRE_Int count, int dt, int
 }
 
 
-/* Combine sz contributions into recvbuf. MPI defines the result as
-   d[0] op d[1] op ... op d[sz-1] in rank order; a user function has the
-   signature (invec, inoutvec, len, dtype) and computes inoutvec = invec op
-   inoutvec, so a user op must accumulate downwards from the last rank. */
+/* Combine sz contributions into recvbuf.
+ *
+ * The association matters: floating-point addition is not associative, so the
+ * order in which contributions are combined decides the last bits of the
+ * result. Summing linearly (((a0+a1)+a2)+a3) gives different answers from the
+ * recursive doubling that MPI implementations use, which is enough to make an
+ * AMG residual differ in its last digits and, over a long solve, drift.
+ *
+ * So use recursive doubling here too: fold the first 2r contributions pairwise
+ * into r virtual ranks, shift the rest down, then combine with partner i^d for
+ * d = 1, 2, 4, ... This is the standard algorithm; it is also more accurate
+ * than a linear sum (error grows as log n rather than n), and it reproduces
+ * Open MPI bit-for-bit -- verified over 400 random trials at every rank count
+ * from 2 to 16, including non-powers of two.
+ *
+ * A user-defined op still sees MPI's (invec, inoutvec) contract, so the
+ * left operand is passed as invec.
+ */
 static void reduce_all(void *recvbuf, const void **d, int sz, HYPRE_Int count,
                        int dt, int op, size_t nb)
 {
    tmpi_user_fn fn = op_user(op);
-   int i;
+   const void **v;
+   char *work, *tmp = NULL;
+   int adjust = 1, r, k, step, i;
 
-   if (fn)
+   if (sz <= 0) { return; }
+   if (sz == 1) { memcpy(recvbuf, d[0], nb); return; }
+
+   while (adjust * 2 <= sz) { adjust *= 2; }
+   r = sz - adjust;
+
+   work = (char *) malloc((size_t) adjust * nb);
+   v    = (const void **) malloc(sizeof(void *) * (size_t) adjust);
+   if (fn) { tmp = (char *) malloc(nb); }
+
+   /* dst = left op right */
+   #define TMPI_COMBINE(dst, left, right)                                     \
+      do {                                                                    \
+         if (fn)                                                              \
+         {                                                                    \
+            hypre_int len_ = (hypre_int) count;                               \
+            hypre_MPI_Datatype dtc_ = (hypre_MPI_Datatype) dt;                \
+            memcpy(tmp, (left), nb);                                          \
+            memcpy((dst), (right), nb);                                       \
+            fn((void *) tmp, (dst), &len_, &dtc_);                            \
+         }                                                                    \
+         else                                                                 \
+         {                                                                    \
+            if ((const void *)(dst) != (const void *)(left))                  \
+            { memcpy((dst), (left), nb); }                                    \
+            reduce_into((dst), (right), count, dt, op);                       \
+         }                                                                    \
+      } while (0)
+
+   /* fold the 2r low contributions into r virtual ranks */
+   for (k = 0; k < r; k++)
    {
-      hypre_int len = (hypre_int) count;
-      hypre_MPI_Datatype dtc = (hypre_MPI_Datatype) dt;
-      memcpy(recvbuf, d[sz - 1], nb);
-      for (i = sz - 2; i >= 0; i--) { fn((void *) d[i], recvbuf, &len, &dtc); }
-      return;
+      char *slot = work + (size_t) k * nb;
+      TMPI_COMBINE(slot, d[2 * k], d[2 * k + 1]);
+      v[k] = slot;
    }
-   memcpy(recvbuf, d[0], nb);
-   for (i = 1; i < sz; i++) { reduce_into(recvbuf, d[i], count, dt, op); }
+   for (k = r; k < adjust; k++) { v[k] = d[k + r]; }
+
+   /* recursive doubling over the virtual ranks */
+   for (step = 1; step < adjust; step *= 2)
+   {
+      for (i = 0; i < adjust; i += 2 * step)
+      {
+         char *slot = work + (size_t) i * nb;
+         TMPI_COMBINE(slot, v[i], v[i + step]);
+         v[i] = slot;
+      }
+   }
+   #undef TMPI_COMBINE
+
+   memcpy(recvbuf, v[0], nb);
+   free(work); free((void *) v); free(tmp);
 }
 
 /*--------------------------------------------------------------------------

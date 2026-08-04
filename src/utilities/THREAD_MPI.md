@@ -109,16 +109,26 @@ unmodified — their `main()` is renamed at compile time.
 | `TEST_sstruct` | 376 | **376** |
 | `TEST_ij` | 406 | 404 (2 = the flexamg issue below) |
 
-Apart from that one issue, the only differences are
+All 971 runnable cases are byte-identical to Open MPI.
 
-* **floating-point last digit** — this implementation reduces in rank order,
-  Open MPI uses a tree. Addition is not associative and MPI guarantees no
-  bitwise reproducibility across implementations. This backend is deterministic
-  and gives identical results on every rank, which is the property that matters.
-  On a 202-iteration run the drift reaches ~0.3% of the final residual, with an
-  identical iteration count.
-* **tests whose input data is absent from the repo** (`elast`), which fail
-  identically under both backends.
+Apart from that one issue, every case that runs produces **byte-identical**
+output, including every digit of every residual.
+
+Getting there required matching the reduction association. Floating-point
+addition is not associative, so the order contributions are combined decides
+the last bits; summing linearly gave residuals that differed in the last digits
+and drifted over long solves (~0.3% of the final residual after 202 iterations,
+though never a different iteration count). `reduce_all` now uses recursive
+doubling, which is the standard algorithm, is more accurate than a linear sum
+(error grows as log n rather than n), and reproduces Open MPI exactly --
+verified over 400 random trials at every rank count from 2 to 16, including
+non-powers of two.
+
+Two caveats on that bit-identity: it holds for Open MPI's small-message
+allreduce path, which is what hypre's dot products use -- large reductions
+switch to ring or segmented algorithms with a different association. And it is
+specific to Open MPI's algorithm selection; MPICH may associate differently.
+Neither affects correctness, only reproducibility against a particular MPI.
 
 Two real bugs were found by that suite and fixed: `Scatterv`/`Scatter`/`Gather`
 dereferencing root-only arguments on every rank (segfault under `-seq_th`), and
