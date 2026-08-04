@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <sched.h>
+#include <unistd.h>
 
 #include "mpithreads.h"
 
@@ -858,6 +859,37 @@ static void *tmpi_trampoline(void *v)
    return NULL;
 }
 
+
+/*--------------------------------------------------------------------------
+ * Default rank count: HYPRE_TMPI_NUM_THREADS if set, else the number of
+ * cores online. Callers who pass a positive count to hypre_tmpi_run keep it;
+ * this is only consulted when they ask for the default.
+ *--------------------------------------------------------------------------*/
+int hypre_tmpi_num_threads(void)
+{
+   const char *e = getenv("HYPRE_TMPI_NUM_THREADS");
+
+   if (e && *e)
+   {
+      char *end = NULL;
+      long v = strtol(e, &end, 10);
+
+      if (end != e && *end == '\0' && v >= 1)
+      {
+         return (int) v;
+      }
+      fprintf(stderr, "hypre: ignoring invalid HYPRE_TMPI_NUM_THREADS=\"%s\" "
+                      "(want a positive integer)\n", e);
+   }
+#if defined(_SC_NPROCESSORS_ONLN)
+   {
+      long n = sysconf(_SC_NPROCESSORS_ONLN);
+      if (n >= 1) { return (int) n; }
+   }
+#endif
+   return 1;
+}
+
 int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
                    int argc, char **argv, void *user)
 {
@@ -866,6 +898,8 @@ int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
    int             *world;
    int i, rc = 0;
 
+   /* nranks <= 0 means "pick for me": HYPRE_TMPI_NUM_THREADS, else cores online */
+   if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
    if (nranks < 1) { return 1; }
    g_nranks = nranks;
 

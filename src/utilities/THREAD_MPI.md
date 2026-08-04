@@ -70,21 +70,36 @@ untouched. Also available: `hypre_tmpi_rank()`, `hypre_tmpi_nranks()`.
 
 ### Choosing the number of threads
 
-The count is the **first argument** — there is no environment variable, because
-there is no launcher to configure. Where MPI has `mpirun -np N` and OpenMP has
-`OMP_NUM_THREADS`, here the caller passes an integer:
+Pass a positive count and it is used as given:
 
 ```c
 hypre_tmpi_run(64, solve_rank, argc, argv, ctx);
 ```
 
-If you want it configurable, that belongs in your own `main()`:
+Pass `0` (or any value `<= 0`) to take the default, which is
+**`HYPRE_TMPI_NUM_THREADS`** if set to a positive integer, otherwise the number
+of cores online:
 
 ```c
-const char *e = getenv("MY_APP_RANKS");
-int np = e ? atoi(e) : (int) sysconf(_SC_NPROCESSORS_ONLN);
-return hypre_tmpi_run(np, solve_rank, argc, argv, ctx);
+hypre_tmpi_run(0, solve_rank, argc, argv, ctx);   /* honours the environment */
 ```
+
+```sh
+HYPRE_TMPI_NUM_THREADS=32 ./your_program
+```
+
+An explicit positive argument always wins over the environment, the same way
+`omp_set_num_threads()` overrides `OMP_NUM_THREADS`. So a caller that wants the
+variable to take effect should ask for the default rather than hard-coding a
+count. `hypre_tmpi_num_threads()` returns the same value if you want to inspect
+or reuse it. A malformed setting is reported on stderr and ignored rather than
+silently treated as 1.
+
+| backend | how the count is set |
+|---|---|
+| MPI | `mpirun -np N` |
+| OpenMP | `OMP_NUM_THREADS` |
+| this backend | `hypre_tmpi_run(N, ...)`, or `HYPRE_TMPI_NUM_THREADS` with `N <= 0` |
 
 Pin the threads yourself if it matters; this library does not set affinity.
 
