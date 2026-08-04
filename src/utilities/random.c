@@ -33,7 +33,7 @@
 
 #include "_hypre_utilities.h"
 
-static HYPRE_Int Seed = 13579;
+static _Thread_local HYPRE_Int Seed = 13579;
 
 /*-------------------------------------------------------------------------------
  * Static global variable: Seed

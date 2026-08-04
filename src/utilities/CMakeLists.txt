@@ -72,6 +72,13 @@ set(REGULAR_SRCS
   caliper_instrumentation.c
 )
 
+# MPI ranks as threads of a single process (see THREAD_MPI.md)
+if (HYPRE_ENABLE_THREAD_MPI)
+  list(REMOVE_ITEM REGULAR_SRCS mpistubs.c)
+  list(APPEND REGULAR_SRCS mpithreads.c)
+  list(APPEND HDRS mpithreads.h)
+endif ()
+
 # Mixed precision sources
 set(MUP_SRCS
   multiprecision.c

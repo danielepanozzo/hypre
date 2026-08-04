@@ -11,7 +11,7 @@
 
 #define hypre_printf_buffer_len 4096
 /* OK to make hypre_printf_buffer a static variable since it is only declared and accessed here */
-static char hypre_printf_buffer[hypre_printf_buffer_len];
+static _Thread_local char hypre_printf_buffer[hypre_printf_buffer_len];
 
 // #ifdef HYPRE_BIGINT
 

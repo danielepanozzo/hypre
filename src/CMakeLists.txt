@@ -153,6 +153,7 @@ set_hypre_option(BASE HYPRE_ENABLE_FEI                  "Use FEI" OFF) # TODO: A
 set_hypre_option(BASE HYPRE_ENABLE_HOPSCOTCH            "Use hopscotch hashing with OpenMP" OFF)
 set_hypre_option(BASE HYPRE_ENABLE_OPENMP               "Use OpenMP" OFF)
 set_hypre_option(BASE HYPRE_ENABLE_MPI                  "Use MPI" ON)
+set_hypre_option(BASE HYPRE_ENABLE_THREAD_MPI           "Implement MPI ranks as threads of one process (no mpirun); requires HYPRE_ENABLE_MPI=OFF" OFF)
 set_hypre_option(BASE HYPRE_ENABLE_LTO                  "Use Link-Time Optimization (LTO)" OFF)
 set_hypre_option(BASE HYPRE_ENABLE_PRINT_ERRORS         "Print HYPRE errors" OFF)
 set_hypre_option(SKIP HYPRE_ENABLE_TIMING               "Use HYPRE timing routines" OFF)
@@ -296,10 +297,18 @@ if (BUILD_SHARED_LIBS)
 endif ()
 
 if (HYPRE_ENABLE_MPI)
+  if (HYPRE_ENABLE_THREAD_MPI)
+    message(FATAL_ERROR "HYPRE_ENABLE_THREAD_MPI replaces MPI with threads; "
+                        "configure with -DHYPRE_ENABLE_MPI=OFF")
+  endif ()
   set(HYPRE_HAVE_MPI ON CACHE INTERNAL "")
   set(HYPRE_SEQUENTIAL OFF CACHE INTERNAL "")
 else ()
   set(HYPRE_SEQUENTIAL ON CACHE INTERNAL "")
+  if (HYPRE_ENABLE_THREAD_MPI)
+    find_package(Threads REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PUBLIC Threads::Threads)
+  endif ()
 endif ()
 
 # Add strict checking option
