@@ -68,6 +68,57 @@ int main(void)
 each one a rank of `COMM_WORLD`, and joins them. `user` is passed through
 untouched. Also available: `hypre_tmpi_rank()`, `hypre_tmpi_nranks()`.
 
+### Choosing the number of threads
+
+The count is the **first argument** — there is no environment variable, because
+there is no launcher to configure. Where MPI has `mpirun -np N` and OpenMP has
+`OMP_NUM_THREADS`, here the caller passes an integer:
+
+```c
+hypre_tmpi_run(64, solve_rank, argc, argv, ctx);
+```
+
+If you want it configurable, that belongs in your own `main()`:
+
+```c
+const char *e = getenv("MY_APP_RANKS");
+int np = e ? atoi(e) : (int) sysconf(_SC_NPROCESSORS_ONLN);
+return hypre_tmpi_run(np, solve_rank, argc, argv, ctx);
+```
+
+Pin the threads yourself if it matters; this library does not set affinity.
+
+### Running hypre's own drivers
+
+hypre's stock test drivers (`ij`, `struct`, `sstruct`) can run unmodified under
+this backend by renaming their `main()` at compile time and supplying a
+launcher. This is how the suite comparisons above were produced:
+
+```c
+/* tmpi_launch.c */
+#include <stdlib.h>
+#include "mpithreads.h"
+
+int hypre_driver_main(int argc, char *argv[]);          /* the driver's main() */
+static int adapter(int argc, char **argv, void *user)
+{ (void) user; return hypre_driver_main(argc, argv); }
+
+int main(int argc, char **argv)
+{
+   const char *e = getenv("TMPI_NP");
+   int np = e ? atoi(e) : 1;
+   return hypre_tmpi_run(np < 1 ? 1 : np, adapter, argc, argv, NULL);
+}
+```
+
+```sh
+cc -c ../test/ij.c -Dmain=hypre_driver_main $INCLUDES -o ij_body.o
+cc -o ij_tmpi tmpi_launch.c ij_body.o $INCLUDES -lHYPRE -lm -lpthread
+TMPI_NP=8 ./ij_tmpi -n 60 60 60 -P 2 2 2 -solver 1
+```
+
+`TMPI_NP` is a convention of that launcher, not of the library.
+
 ## Debug switches
 
 | build flag | effect |
@@ -169,7 +220,8 @@ with a message-truncation abort; it is correct on 1 rank, and correct under real
 MPI at every rank count. Minimal reproducer:
 
 ```sh
-TMPI_NP=2 ./ij -n 40 40 40 -P 2 1 1 -solver 1 \
+# built as described under "Running hypre's own drivers" above
+TMPI_NP=2 ./ij_tmpi -n 40 40 40 -P 2 1 1 -solver 1 \
     -flexamg_cycle_struct 0,0,-1,-1,-1,-1,1,1,1,1,-2
 ```
 
