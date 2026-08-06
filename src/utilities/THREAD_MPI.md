@@ -248,6 +248,43 @@ the spin barrier — building with `-DTMPI_DISABLE_FASTSEND` or
 `-DTMPI_LOCK_BARRIER` reproduces it identically. This affects 2 of hypre's 976
 `TEST_ij`/`TEST_struct`/`TEST_sstruct` cases.
 
+## GPU (CUDA) builds
+
+Builds and runs with CUDA. Both configurations compile clean on CUDA 13.2:
+
+```sh
+cmake -S src -B build-cuda -DCMAKE_BUILD_TYPE=Release \
+      -DHYPRE_ENABLE_MPI=OFF -DHYPRE_ENABLE_THREAD_MPI=ON \
+      -DHYPRE_ENABLE_CUDA=ON -DHYPRE_ENABLE_UMPIRE=OFF \
+      -DCMAKE_CUDA_ARCHITECTURES=<arch>
+```
+
+`-DHYPRE_ENABLE_UMPIRE=OFF` is hypre's own requirement for GPU builds without
+Umpire, not something this backend adds.
+
+**One rank per GPU works and matches real MPI exactly.** On an RTX 3080 Ti with
+a 240³ problem, threads-as-ranks and MPI both converge in 20 iterations to the
+same residual, and take essentially the same time (5.16 s vs 5.25 s).
+
+**More than one rank per GPU does not.** The solve itself is correct — the
+iteration count and residual are right, and match MPI — but the process then
+segfaults during `HYPRE_Finalize`:
+
+```
+HYPRE_Finalize -> hypre_DeviceDataDestroy -> cudaStreamDestroy -> libcuda: SIGSEGV
+```
+
+Under real MPI each rank is a separate process with its own CUDA context, so
+several ranks can share a device safely. Here every rank is a thread of one
+process sharing a single primary context, and hypre's device teardown assumes
+it owns that context. Serialising the vendor-handle destruction with a mutex
+does not help: the first thread to tear down already fails, so the context is
+unusable before teardown starts. Making hypre's GPU layer safe for several
+ranks per process is a larger change than this backend.
+
+In practice this matters little — the normal GPU configuration is one rank per
+GPU, which works. Use MPI if you need several ranks sharing one device.
+
 ## Limits
 
 - **Exercised on the IJ/ParCSR path** (BoomerAMG, PCG, ParaSails, FSAI, ILU, MGR
