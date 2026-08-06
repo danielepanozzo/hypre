@@ -252,7 +252,7 @@ typedef struct
 
 #define hypre_HandleMagmaQueue(hypre_handle)                     ((hypre_handle) -> magma_queue)
 
-extern _Thread_local hypre_Handle *_hypre_handle;
+extern HYPRE_THREAD_LOCAL hypre_Handle *_hypre_handle;
 #endif
 /******************************************************************************
  * Copyright (c) 1998 Lawrence Livermore National Security, LLC and other
@@ -275,7 +275,7 @@ typedef enum hypre_State_enum
    HYPRE_STATE_FINALIZED   = 2
 } hypre_State;
 
-extern _Thread_local hypre_State hypre__global_state;
+extern HYPRE_THREAD_LOCAL hypre_State hypre__global_state;
 
 #endif /* hypre_STATE_HEADER */
 /******************************************************************************
@@ -738,7 +738,7 @@ typedef struct
 
 } hypre_Error;
 
-extern _Thread_local hypre_Error hypre__global_error;
+extern HYPRE_THREAD_LOCAL hypre_Error hypre__global_error;
 #define hypre_error_flag  hypre__global_error.error_flag
 #define hypre_error_temp_flag  hypre__global_error.temp_error_flag
 
@@ -1779,7 +1779,7 @@ typedef struct
 
 } hypre_TimingType;
 
-extern _Thread_local hypre_TimingType *hypre_global_timing;
+extern HYPRE_THREAD_LOCAL hypre_TimingType *hypre_global_timing;
 
 /*-------------------------------------------------------
  * Accessor functions

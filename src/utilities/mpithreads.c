@@ -217,7 +217,7 @@ static tmpi_user_fn op_user(int op)
 }
 
 static int             g_nranks = 1;
-static _Thread_local int g_myrank = 0;
+static HYPRE_THREAD_LOCAL int g_myrank = 0;
 
 int  hypre_tmpi_rank(void)   { return g_myrank; }
 int  hypre_tmpi_nranks(void) { return g_nranks; }
