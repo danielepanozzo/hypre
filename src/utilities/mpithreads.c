@@ -217,6 +217,13 @@ static tmpi_user_fn op_user(int op)
 }
 
 static int             g_nranks = 1;
+static int universe_init(int nranks);
+static void universe_free(void);
+static int             g_universe_up = 0;
+/* the universe was created implicitly for a single thread, not by a team */
+static int             g_auto_universe = 0;
+static pthread_mutex_t g_auto_mtx = PTHREAD_MUTEX_INITIALIZER;
+static void ensure_universe(void);
 static HYPRE_THREAD_LOCAL int g_myrank = 0;
 
 int  hypre_tmpi_rank(void)   { return g_myrank; }
@@ -252,6 +259,10 @@ static const char *state_name(int op)
 
 static tmpi_comm *comm_get(hypre_MPI_Comm c)
 {
+   /* hypre is perfectly usable with no team at all: one thread, one rank. That
+      thread never called hypre_tmpi_run/team_start, so give it a world here
+      rather than letting COMM_WORLD report size 0 and rank -1. */
+   if (!g_universe_up) { ensure_universe(); }
    if (c < 0 || c >= TMPI_MAX_COMMS || !g_comm[c].used) { return NULL; }
    return &g_comm[c];
 }
@@ -894,7 +905,29 @@ int hypre_tmpi_num_threads(void)
  * The rank universe: inboxes, request pools, COMM_WORLD. Process-wide, so at
  * most one universe exists at a time.
  *--------------------------------------------------------------------------*/
-static int g_universe_up = 0;
+
+/* Build the implicit one-rank world. Only ever reached before a team exists,
+   but locked anyway so two threads racing to first use cannot both build it. */
+static void ensure_universe(void)
+{
+   pthread_mutex_lock(&g_auto_mtx);
+   if (!g_universe_up)
+   {
+      universe_init(1);
+      g_auto_universe = 1;
+   }
+   pthread_mutex_unlock(&g_auto_mtx);
+}
+
+/* A real team supersedes the implicit world: drop it so nranks can grow. */
+static void drop_auto_universe(void)
+{
+   if (g_auto_universe)
+   {
+      universe_free();
+      g_auto_universe = 0;
+   }
+}
 
 static int universe_init(int nranks)
 {
@@ -970,6 +1003,7 @@ int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
    /* nranks <= 0 means "pick for me": HYPRE_TMPI_NUM_THREADS, else cores online */
    if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
    if (nranks < 1) { return 1; }
+   drop_auto_universe();
    if (universe_init(nranks)) { return 1; }
 
    th   = (pthread_t *) malloc(sizeof(pthread_t) * (size_t) nranks);
@@ -1064,6 +1098,7 @@ int hypre_tmpi_team_create(int nranks, hypre_tmpi_team **team_ptr)
 
    if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
    if (nranks < 1) { return 1; }
+   drop_auto_universe();
    if (universe_init(nranks)) { return 1; }
 
    t = (hypre_tmpi_team *) calloc(1, sizeof(hypre_tmpi_team));
@@ -1145,6 +1180,7 @@ int hypre_tmpi_team_start(int nranks, int (*worker)(void *user), void *user,
 
    if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
    if (nranks < 1) { return 1; }
+   drop_auto_universe();
    if (universe_init(nranks)) { return 1; }
 
    t = (hypre_tmpi_team *) calloc(1, sizeof(hypre_tmpi_team));
