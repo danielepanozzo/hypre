@@ -890,17 +890,22 @@ int hypre_tmpi_num_threads(void)
    return 1;
 }
 
-int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
-                   int argc, char **argv, void *user)
-{
-   pthread_t       *th;
-   tmpi_thread_arg *args;
-   int             *world;
-   int i, rc = 0;
+/*--------------------------------------------------------------------------
+ * The rank universe: inboxes, request pools, COMM_WORLD. Process-wide, so at
+ * most one universe exists at a time.
+ *--------------------------------------------------------------------------*/
+static int g_universe_up = 0;
 
-   /* nranks <= 0 means "pick for me": HYPRE_TMPI_NUM_THREADS, else cores online */
-   if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
-   if (nranks < 1) { return 1; }
+static int universe_init(int nranks)
+{
+   int *world;
+   int i;
+
+   if (g_universe_up)
+   {
+      fprintf(stderr, "tmpi: a rank universe already exists in this process\n");
+      return 1;
+   }
    g_nranks = nranks;
 
    g_inbox = (tmpi_inbox *) calloc((size_t) nranks, sizeof(tmpi_inbox));
@@ -912,7 +917,6 @@ int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
       g_reqs[i] = (tmpi_req *) calloc(TMPI_REQS_PER_RANK, sizeof(tmpi_req));
    }
 
-   /* COMM_WORLD = handle 0 */
    world = (int *) malloc(sizeof(int) * (size_t) nranks);
    for (i = 0; i < nranks; i++) { world[i] = i; }
    {
@@ -941,6 +945,32 @@ int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
          pthread_detach(wt);
       }
    }
+   g_universe_up = 1;
+   return 0;
+}
+
+static void universe_free(void)
+{
+   int i;
+   if (!g_universe_up) { return; }
+   for (i = 0; i < g_nranks; i++) { free(g_reqs[i]); }
+   free(g_reqs);   g_reqs = NULL;
+   free(g_inbox);  g_inbox = NULL;
+   free(g_state);  g_state = NULL;
+   g_universe_up = 0;
+}
+
+int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
+                   int argc, char **argv, void *user)
+{
+   pthread_t       *th;
+   tmpi_thread_arg *args;
+   int i, rc = 0;
+
+   /* nranks <= 0 means "pick for me": HYPRE_TMPI_NUM_THREADS, else cores online */
+   if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
+   if (nranks < 1) { return 1; }
+   if (universe_init(nranks)) { return 1; }
 
    th   = (pthread_t *) malloc(sizeof(pthread_t) * (size_t) nranks);
    args = (tmpi_thread_arg *) malloc(sizeof(tmpi_thread_arg) * (size_t) nranks);
@@ -957,7 +987,146 @@ int hypre_tmpi_run(int nranks, int (*fn)(int, char **, void *),
    for (i = 0; i < nranks; i++) { pthread_join(th[i], NULL); if (args[i].ret) { rc = args[i].ret; } }
 
    free(th); free(args);
+   universe_free();
    return rc;
+}
+
+/*--------------------------------------------------------------------------
+ * Persistent rank team
+ *
+ * hypre_tmpi_run() spawns, runs one function and joins, which suits a program
+ * whose whole life is the parallel region. A library embedding hypre needs the
+ * opposite shape: the ranks must outlive individual calls, so that a solver can
+ * be constructed, then have factorize() and solve() invoked on it repeatedly,
+ * each collectively across the same ranks.
+ *
+ * The team spawns its threads once and parks them. Each invoke wakes them to
+ * run one function and blocks the caller until all have returned. The calling
+ * thread is not itself a rank.
+ *--------------------------------------------------------------------------*/
+struct hypre_tmpi_team_struct
+{
+   pthread_t      *th;
+   int             nranks;
+   pthread_mutex_t mtx;
+   pthread_cond_t  cv_work;    /* ranks wait here for the next call */
+   pthread_cond_t  cv_done;    /* the caller waits here for completion */
+   int             generation; /* bumped once per invoke */
+   int             nfinished;
+   int             shutdown;
+   int           (*fn)(void *);
+   void           *user;
+   int             rc;
+};
+
+typedef struct { hypre_tmpi_team *team; int rank; } tmpi_team_arg;
+
+static void *tmpi_team_worker(void *v)
+{
+   tmpi_team_arg   *a = (tmpi_team_arg *) v;
+   hypre_tmpi_team *t = a->team;
+   int seen = 0;
+
+   g_myrank = a->rank;
+
+   for (;;)
+   {
+      int (*fn)(void *); void *user; int rc;
+
+      pthread_mutex_lock(&t->mtx);
+      while (!t->shutdown && t->generation == seen)
+      {
+         pthread_cond_wait(&t->cv_work, &t->mtx);
+      }
+      if (t->shutdown) { pthread_mutex_unlock(&t->mtx); break; }
+      seen = t->generation;
+      fn = t->fn; user = t->user;
+      pthread_mutex_unlock(&t->mtx);
+
+      rc = fn ? fn(user) : 0;
+
+      pthread_mutex_lock(&t->mtx);
+      if (rc && !t->rc) { t->rc = rc; }
+      if (++t->nfinished == t->nranks) { pthread_cond_broadcast(&t->cv_done); }
+      pthread_mutex_unlock(&t->mtx);
+   }
+   return NULL;
+}
+
+int hypre_tmpi_team_create(int nranks, hypre_tmpi_team **team_ptr)
+{
+   hypre_tmpi_team *t;
+   tmpi_team_arg   *args;
+   int i;
+
+   if (!team_ptr) { return 1; }
+   *team_ptr = NULL;
+
+   if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
+   if (nranks < 1) { return 1; }
+   if (universe_init(nranks)) { return 1; }
+
+   t = (hypre_tmpi_team *) calloc(1, sizeof(hypre_tmpi_team));
+   t->nranks = nranks;
+   pthread_mutex_init(&t->mtx, NULL);
+   pthread_cond_init(&t->cv_work, NULL);
+   pthread_cond_init(&t->cv_done, NULL);
+   t->th = (pthread_t *) malloc(sizeof(pthread_t) * (size_t) nranks);
+
+   /* the arg blocks must outlive create(), so hang them off the team */
+   args = (tmpi_team_arg *) malloc(sizeof(tmpi_team_arg) * (size_t) nranks);
+   for (i = 0; i < nranks; i++)
+   {
+      args[i].team = t; args[i].rank = i;
+      if (pthread_create(&t->th[i], NULL, tmpi_team_worker, &args[i]) != 0)
+      {
+         fprintf(stderr, "tmpi: pthread_create failed for rank %d\n", i);
+         return 1;
+      }
+   }
+   t->user = NULL;
+   *team_ptr = t;
+   return 0;
+}
+
+int hypre_tmpi_team_size(hypre_tmpi_team *t) { return t ? t->nranks : 0; }
+
+int hypre_tmpi_team_invoke(hypre_tmpi_team *t, int (*fn)(void *user), void *user)
+{
+   int rc;
+
+   if (!t || !fn) { return 1; }
+
+   pthread_mutex_lock(&t->mtx);
+   t->fn = fn; t->user = user; t->rc = 0; t->nfinished = 0;
+   t->generation++;
+   pthread_cond_broadcast(&t->cv_work);
+   while (t->nfinished < t->nranks) { pthread_cond_wait(&t->cv_done, &t->mtx); }
+   rc = t->rc;
+   pthread_mutex_unlock(&t->mtx);
+
+   return rc;
+}
+
+int hypre_tmpi_team_destroy(hypre_tmpi_team *t)
+{
+   int i;
+   if (!t) { return 0; }
+
+   pthread_mutex_lock(&t->mtx);
+   t->shutdown = 1;
+   pthread_cond_broadcast(&t->cv_work);
+   pthread_mutex_unlock(&t->mtx);
+
+   for (i = 0; i < t->nranks; i++) { pthread_join(t->th[i], NULL); }
+
+   pthread_mutex_destroy(&t->mtx);
+   pthread_cond_destroy(&t->cv_work);
+   pthread_cond_destroy(&t->cv_done);
+   free(t->th);
+   free(t);
+   universe_free();
+   return 0;
 }
 
 /*==========================================================================
