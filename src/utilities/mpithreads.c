@@ -1108,6 +1108,95 @@ int hypre_tmpi_team_invoke(hypre_tmpi_team *t, int (*fn)(void *user), void *user
    return rc;
 }
 
+/*--------------------------------------------------------------------------
+ * Caller-as-rank-0 team.
+ *
+ * The invoke model above blocks the caller for the duration of each collective
+ * call, which suits "run this function on N ranks". A library written in the
+ * SPMD style wants the opposite: one driver rank that stays in the
+ * application's hands, and workers that live inside a service loop for as long
+ * as the object exists, taking commands from the driver.
+ *
+ * hypre_tmpi_team_start() makes the calling thread rank 0 and returns to it
+ * immediately, having spawned ranks 1..nranks-1 each running 'worker'. The
+ * application then drives as rank 0 -- broadcasting commands the workers
+ * service -- and calls hypre_tmpi_team_join() once it has told them to stop.
+ *--------------------------------------------------------------------------*/
+typedef struct { hypre_tmpi_team *team; int rank; int (*fn)(void *); void *user; int ret; }
+        tmpi_worker_arg;
+
+static void *tmpi_worker_entry(void *v)
+{
+   tmpi_worker_arg *a = (tmpi_worker_arg *) v;
+   g_myrank = a->rank;
+   a->ret = a->fn ? a->fn(a->user) : 0;
+   return NULL;
+}
+
+int hypre_tmpi_team_start(int nranks, int (*worker)(void *user), void *user,
+                          hypre_tmpi_team **team_ptr)
+{
+   hypre_tmpi_team *t;
+   tmpi_worker_arg *args;
+   int i;
+
+   if (!team_ptr || !worker) { return 1; }
+   *team_ptr = NULL;
+
+   if (nranks < 1) { nranks = hypre_tmpi_num_threads(); }
+   if (nranks < 1) { return 1; }
+   if (universe_init(nranks)) { return 1; }
+
+   t = (hypre_tmpi_team *) calloc(1, sizeof(hypre_tmpi_team));
+   t->nranks = nranks;
+   pthread_mutex_init(&t->mtx, NULL);
+   pthread_cond_init(&t->cv_work, NULL);
+   pthread_cond_init(&t->cv_done, NULL);
+   t->th = (pthread_t *) calloc((size_t) nranks, sizeof(pthread_t));
+
+   args = (tmpi_worker_arg *) calloc((size_t) nranks, sizeof(tmpi_worker_arg));
+   t->user = args;               /* keep them alive until join */
+
+   /* the caller is rank 0 and keeps running the application */
+   g_myrank = 0;
+
+   for (i = 1; i < nranks; i++)
+   {
+      args[i].team = t; args[i].rank = i; args[i].fn = worker; args[i].user = user;
+      if (pthread_create(&t->th[i], NULL, tmpi_worker_entry, &args[i]) != 0)
+      {
+         fprintf(stderr, "tmpi: pthread_create failed for rank %d\n", i);
+         return 1;
+      }
+   }
+   *team_ptr = t;
+   return 0;
+}
+
+int hypre_tmpi_team_join(hypre_tmpi_team *t)
+{
+   tmpi_worker_arg *args;
+   int i, rc = 0;
+
+   if (!t) { return 0; }
+   args = (tmpi_worker_arg *) t->user;
+
+   for (i = 1; i < t->nranks; i++)
+   {
+      pthread_join(t->th[i], NULL);
+      if (args && args[i].ret && !rc) { rc = args[i].ret; }
+   }
+
+   pthread_mutex_destroy(&t->mtx);
+   pthread_cond_destroy(&t->cv_work);
+   pthread_cond_destroy(&t->cv_done);
+   free(args);
+   free(t->th);
+   free(t);
+   universe_free();
+   return rc;
+}
+
 int hypre_tmpi_team_destroy(hypre_tmpi_team *t)
 {
    int i;

@@ -51,6 +51,20 @@ int hypre_tmpi_team_invoke(hypre_tmpi_team *team, int (*fn)(void *user), void *u
 int hypre_tmpi_team_size(hypre_tmpi_team *team);
 int hypre_tmpi_team_destroy(hypre_tmpi_team *team);
 
+/*--------------------------------------------------------------------------
+ * Caller-as-rank-0 team, for libraries written in the SPMD style.
+ *
+ * hypre_tmpi_team_start() makes the CALLING thread rank 0 and returns to it at
+ * once, having spawned ranks 1..nranks-1 each running 'worker'. The
+ * application then drives as rank 0 -- typically broadcasting commands that the
+ * workers service in a loop -- and calls hypre_tmpi_team_join() after telling
+ * them to stop. Contrast hypre_tmpi_team_invoke(), where the caller is not a
+ * rank and blocks for the duration of each call.
+ *--------------------------------------------------------------------------*/
+int hypre_tmpi_team_start(int nranks, int (*worker)(void *user), void *user,
+                          hypre_tmpi_team **team);
+int hypre_tmpi_team_join(hypre_tmpi_team *team);
+
 /* Calling thread's world rank, and the total number of ranks. */
 int hypre_tmpi_rank(void);
 int hypre_tmpi_nranks(void);
