@@ -14,8 +14,6 @@
 #ifndef hypre_MPISTUBS
 #define hypre_MPISTUBS
 
-#include <stdint.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -151,11 +149,10 @@ typedef struct
 {
    HYPRE_Int hypre_MPI_SOURCE;
    HYPRE_Int hypre_MPI_TAG;
-   HYPRE_Int hypre_MPI_COUNT;
 } hypre_MPI_Status;
 
 typedef HYPRE_Int  hypre_MPI_Op;
-typedef intptr_t   hypre_MPI_Aint;
+typedef HYPRE_Int  hypre_MPI_Aint;
 typedef HYPRE_Int  hypre_MPI_Info;
 
 #define  hypre_MPI_COMM_SELF   1
@@ -189,8 +186,8 @@ typedef HYPRE_Int  hypre_MPI_Info;
 #define  hypre_MPI_UNDEFINED -9999
 #define  hypre_MPI_REQUEST_NULL  0
 #define  hypre_MPI_INFO_NULL     0
-#define  hypre_MPI_ANY_SOURCE    (-1)
-#define  hypre_MPI_ANY_TAG       (-2)
+#define  hypre_MPI_ANY_SOURCE    1
+#define  hypre_MPI_ANY_TAG       1
 
 #else
 
