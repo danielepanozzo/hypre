@@ -2576,7 +2576,11 @@ hypre_ILULocalRCM(hypre_CSRMatrix *A,
     * Build Graph for RCM ordering
     */
    G_nnz = 0;
-   G_capacity = hypre_max((A_nnz * n * n / num_nodes / num_nodes) - num_nodes, 1);
+   /* The graph has no more entries than A, so keep the estimate representable. */
+   HYPRE_Real G_capacity_estimate = (HYPRE_Real) A_nnz * n * n /
+                                    num_nodes / num_nodes - num_nodes;
+   G_capacity = hypre_max((HYPRE_Int) hypre_min(G_capacity_estimate,
+                                                (HYPRE_Real) A_nnz), 1);
    G_i = hypre_TAlloc(HYPRE_Int, num_nodes + 1, HYPRE_MEMORY_HOST);
    G_j = hypre_TAlloc(HYPRE_Int, G_capacity, HYPRE_MEMORY_HOST);
 
@@ -2618,9 +2622,9 @@ hypre_ILULocalRCM(hypre_CSRMatrix *A,
 
    /* Create matrix G on the host */
    G = hypre_CSRMatrixCreate(num_nodes, num_nodes, G_nnz);
-   hypre_CSRMatrixMemoryLocation(G) = HYPRE_MEMORY_HOST;
    hypre_CSRMatrixI(G) = G_i;
    hypre_CSRMatrixJ(G) = G_j;
+   hypre_CSRMatrixInitialize_v2(G, 0, HYPRE_MEMORY_HOST);
 
    /* Check if G is not empty (no need to do any kind of RCM) */
    if (G_nnz > 0)
@@ -2628,7 +2632,6 @@ hypre_ILULocalRCM(hypre_CSRMatrix *A,
       /* Sum G with G' if G is nonsymmetric */
       if (!sym)
       {
-         hypre_CSRMatrixData(G) = hypre_CTAlloc(HYPRE_Complex, G_nnz, HYPRE_MEMORY_HOST);
          hypre_CSRMatrixTranspose(G, &GT, 1);
          GGT = hypre_CSRMatrixAdd(1.0, G, 1.0, GT);
          hypre_CSRMatrixDestroy(G);

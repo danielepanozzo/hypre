@@ -1131,7 +1131,7 @@ hypre_SeqVectorPointwiseDivpyHost( hypre_Vector *x,
          if (marker)
          {
 #ifdef HYPRE_USING_OPENMP
-            #pragma omp parallel for private(i) HYPRE_SMP_SCHEDULE
+            #pragma omp parallel for private(i, val) HYPRE_SMP_SCHEDULE
 #endif
             for (i = 0; i < size; i++)
             {
@@ -1146,7 +1146,7 @@ hypre_SeqVectorPointwiseDivpyHost( hypre_Vector *x,
          else
          {
 #ifdef HYPRE_USING_OPENMP
-            #pragma omp parallel for private(i) HYPRE_SMP_SCHEDULE
+            #pragma omp parallel for private(i, val) HYPRE_SMP_SCHEDULE
 #endif
             for (i = 0; i < size; i++)
             {
@@ -1162,7 +1162,7 @@ hypre_SeqVectorPointwiseDivpyHost( hypre_Vector *x,
          if (marker)
          {
 #ifdef HYPRE_USING_OPENMP
-            #pragma omp parallel for private(i, j) HYPRE_SMP_SCHEDULE
+            #pragma omp parallel for private(i, j, val) HYPRE_SMP_SCHEDULE
 #endif
             for (i = 0; i < size; i++)
             {
@@ -1179,7 +1179,7 @@ hypre_SeqVectorPointwiseDivpyHost( hypre_Vector *x,
          else
          {
 #ifdef HYPRE_USING_OPENMP
-            #pragma omp parallel for private(i, j) HYPRE_SMP_SCHEDULE
+            #pragma omp parallel for private(i, j, val) HYPRE_SMP_SCHEDULE
 #endif
             for (i = 0; i < size; i++)
             {
@@ -1381,7 +1381,7 @@ hypre_SeqVectorInnerProdTaggedHost( hypre_Vector  *x,
 #if defined(HYPRE_USING_OPENMP)
    HYPRE_Int      j, num_threads = hypre_NumThreads();
    HYPRE_Complex *thread_sums    = hypre_CTAlloc(HYPRE_Complex,
-                                                 num_threads * num_tags,
+                                                 num_threads * (num_tags + 1),
                                                  HYPRE_MEMORY_HOST);
 #endif
 
@@ -1395,7 +1395,7 @@ hypre_SeqVectorInnerProdTaggedHost( hypre_Vector  *x,
    #pragma omp parallel private(i, j)
    {
       HYPRE_Int      tid = hypre_GetThreadNum();
-      HYPRE_Complex *sum = &thread_sums[tid * num_tags];
+      HYPRE_Complex *sum = &thread_sums[tid * (num_tags + 1)];
 
       #pragma omp for HYPRE_SMP_SCHEDULE
       for (i = 0; i < total_size; i++)
@@ -1411,6 +1411,7 @@ hypre_SeqVectorInnerProdTaggedHost( hypre_Vector  *x,
          }
       }
    }
+   hypre_TFree(thread_sums, HYPRE_MEMORY_HOST);
 #else
    for (i = 0; i < total_size; i++)
    {
