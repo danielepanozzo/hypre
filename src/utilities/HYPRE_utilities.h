@@ -16,6 +16,25 @@
 
 #include <HYPRE_config.h>
 
+/*--------------------------------------------------------------------------
+ * Thread-local storage. Spelled differently in C11 and C++, and hypre's
+ * headers are included from both -- the GPU sources are compiled as C++ by
+ * nvcc, where HYPRE_THREAD_LOCAL does not exist.
+ *--------------------------------------------------------------------------*/
+#if !defined(HYPRE_THREAD_LOCAL)
+#if defined(__cplusplus)
+#define HYPRE_THREAD_LOCAL thread_local
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define HYPRE_THREAD_LOCAL _Thread_local
+#elif defined(__GNUC__) || defined(__clang__)
+#define HYPRE_THREAD_LOCAL __thread
+#elif defined(_MSC_VER)
+#define HYPRE_THREAD_LOCAL __declspec(thread)
+#else
+#define HYPRE_THREAD_LOCAL
+#endif
+#endif
+
 #ifndef HYPRE_SEQUENTIAL
 #include "mpi.h"
 #endif
